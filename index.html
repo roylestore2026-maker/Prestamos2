@@ -226,6 +226,32 @@ input:focus, select:focus{outline:2px solid var(--forest); outline-offset:1px;}
 }
 .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
 
+
+/* ---------- Payment date picker ---------- */
+.payment-modal{
+  position:fixed; inset:0; background:rgba(18,51,42,.58);
+  display:none; align-items:center; justify-content:center; z-index:90; padding:20px;
+}
+.payment-modal.open{display:flex;}
+.payment-card{
+  background:var(--white); border:1px solid var(--line); border-radius:14px;
+  padding:22px; width:min(380px,100%); box-shadow:0 16px 40px rgba(0,0,0,.28);
+}
+.payment-card h3{
+  font-family:'Fraunces',serif; color:var(--forest-dark); margin:0 0 6px; font-size:20px;
+}
+.payment-card p{font-size:12.5px; color:var(--ink-soft); margin:0 0 16px; line-height:1.45;}
+.payment-card .payment-actions{display:flex; gap:8px; margin-top:14px; justify-content:flex-end;}
+
+
+/* ---------- Capital payment modal ---------- */
+.capital-modal{position:fixed;inset:0;background:rgba(18,51,42,.58);display:none;align-items:center;justify-content:center;z-index:91;padding:20px;}
+.capital-modal.open{display:flex;}
+.capital-card{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:22px;width:min(400px,100%);box-shadow:0 16px 40px rgba(0,0,0,.28);}
+.capital-card h3{font-family:'Fraunces',serif;color:var(--forest-dark);margin:0 0 6px;font-size:20px;}
+.capital-card p{font-size:12.5px;color:var(--ink-soft);margin:0 0 16px;line-height:1.45;}
+.capital-card .capital-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end;}
+
 /* ---------- Auth gate ---------- */
 #authGate{
   position:fixed; inset:0; background:linear-gradient(160deg, var(--forest) 0%, var(--forest-dark)100%);
@@ -253,6 +279,28 @@ input:focus, select:focus{outline:2px solid var(--forest); outline-offset:1px;}
 </head>
 <body>
 
+
+<div class="capital-modal" id="capitalModal">
+  <div class="capital-card">
+    <h3>Abono a capital</h3>
+    <p id="capitalModalText">Registra un abono extraordinario que reduzca el capital pendiente del préstamo.</p>
+    <div class="form-grid">
+      <div>
+        <label for="capitalAmountInput">Monto del abono (COP)</label>
+        <input type="number" id="capitalAmountInput" min="1" step="1" />
+      </div>
+      <div>
+        <label for="capitalDateInput">Fecha del abono</label>
+        <input type="date" id="capitalDateInput" />
+      </div>
+    </div>
+    <div class="capital-actions">
+      <button class="btn secondary" id="capitalCancelBtn" type="button">Cancelar</button>
+      <button class="btn" id="capitalConfirmBtn" type="button">Registrar abono</button>
+    </div>
+  </div>
+</div>
+
 <div id="authGate">
   <div class="auth-card">
     <div class="eyebrow">Libro de Préstamos</div>
@@ -279,6 +327,20 @@ input:focus, select:focus{outline:2px solid var(--forest); outline-offset:1px;}
   <div class="panel" id="panel"></div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="payment-modal" id="paymentModal">
+  <div class="payment-card">
+    <h3>Registrar pago</h3>
+    <p id="paymentModalText">Selecciona la fecha en que realmente recibiste el pago.</p>
+    <label for="paymentDateInput">Fecha del pago</label>
+    <input type="date" id="paymentDateInput" />
+    <div class="payment-actions">
+      <button class="btn secondary" id="paymentCancelBtn" type="button">Cancelar</button>
+      <button class="btn" id="paymentConfirmBtn" type="button">Confirmar pago</button>
+    </div>
+  </div>
+</div>
+
 
 <script>
 const STORAGE_KEY = 'prestamos-app-state-v3';
@@ -656,6 +718,8 @@ function showAuthGate(){
   document.getElementById('authError').textContent='';
 }
 function showApp(){
+  bindPaymentModalEvents();
+  bindCapitalModalEvents();
   document.getElementById('authGate').style.display='none';
   document.getElementById('shell').style.display='block';
   if(!isAdmin() && currentTab==='nuevo') currentTab='resumen';
@@ -697,20 +761,29 @@ function createLoan(data){
   render();
   showToast('Préstamo registrado. Aquí tienes el plan de pagos.');
 }
-function registerPayment(loanId, n){
+function registerPayment(loanId, n, paymentDate){
   const loan = state.loans.find(l=>l.id===loanId);
-  const item = loan.schedule.find(it=>it.n===n);
+  const item = loan?.schedule.find(it=>it.n===n);
   if(!item || item.paid) return;
+  if(!paymentDate) { showToast('Selecciona la fecha del pago.'); return; }
+
   item.paid = true;
-  item.paidDate = todayStr();
+  item.paidDate = paymentDate;
+
   let bank = bankById(loan.bankId);
   if(!bank) bank = state.pool.banks[0];
   if(bank){
     bank.balance += item.total;
-    state.pool.movements.unshift({date:item.paidDate, type:'pago', bankId:bank.id, amount:item.total, note:`Cuota ${n} de ${loan.name} — interés ${fmt(item.interest)}, capital ${fmt(item.capital)} → ${bank.name}`});
+    state.pool.movements.unshift({
+      date:item.paidDate,
+      type:'pago',
+      bankId:bank.id,
+      amount:item.total,
+      note:`Cuota ${n} de ${loan.name} — interés ${fmt(item.interest)}, capital ${fmt(item.capital)} → ${bank.name}`
+    });
   }
   saveState(); render();
-  showToast('Pago registrado y devuelto a la bolsa.');
+  showToast(`Pago registrado con fecha ${fmtDate(paymentDate)} y devuelto a la bolsa.`);
 }
 function editLoan(id, data){
   editFormError = '';
@@ -896,6 +969,43 @@ function tableWrap(theadCols, bodyHtml){
   return `<div class="tbl-scroll"><table><thead><tr>${theadCols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
 }
 
+function annualLoanYield(){
+  return state.loans.reduce((sum,l)=>sum + l.schedule.filter(it=>!it.paid).reduce((s,it)=>s+it.interest,0),0);
+}
+function monthlyLoanYield(){ return annualLoanYield()/12; }
+function annualPoolYield(){
+  return state.pool.banks.reduce((sum,b)=>sum + b.balance*(b.rate/100),0);
+}
+function monthlyPoolYield(){ return annualPoolYield()/12; }
+function annualTotalYield(){ return annualLoanYield()+annualPoolYield(); }
+function monthlyTotalYield(){ return monthlyLoanYield()+monthlyPoolYield(); }
+
+function annualLoanYieldPct(){
+  const capital = state.loans.reduce((sum,l)=>sum+loanOutstandingCapital(l),0);
+  return capital>0 ? (annualLoanYield()/capital)*100 : 0;
+}
+function monthlyLoanYieldPct(){
+  const capital = state.loans.reduce((sum,l)=>sum+loanOutstandingCapital(l),0);
+  return capital>0 ? (monthlyLoanYield()/capital)*100 : 0;
+}
+function annualPoolYieldPct(){
+  const capital = poolTotalBalance();
+  return capital>0 ? (annualPoolYield()/capital)*100 : 0;
+}
+function monthlyPoolYieldPct(){
+  const capital = poolTotalBalance();
+  return capital>0 ? (monthlyPoolYield()/capital)*100 : 0;
+}
+function annualTotalYieldPct(){
+  const capital = poolTotalBalance() + state.loans.reduce((sum,l)=>sum+loanOutstandingCapital(l),0);
+  return capital>0 ? (annualTotalYield()/capital)*100 : 0;
+}
+function monthlyTotalYieldPct(){
+  const capital = poolTotalBalance() + state.loans.reduce((sum,l)=>sum+loanOutstandingCapital(l),0);
+  return capital>0 ? (monthlyTotalYield()/capital)*100 : 0;
+}
+function pctFmt(v){ return `${v.toFixed(2)}%`; }
+
 function viewResumen(){
   const activeCapital = totalActiveCapital();
   const totalWorth = poolTotalBalance() + activeCapital;
@@ -907,15 +1017,13 @@ function viewResumen(){
   return `
   <h2 class="section-title">Resumen general</h2>
   <p class="section-sub">Así está distribuido tu dinero hoy, ${fmtDate(todayStr())}.</p>
-  <div class="jar-wrap">
-    <div class="jar">
-      <div class="jar-fill" style="height:${pct}%"></div>
-      <div class="jar-label">${pct}%<br>ociosa</div>
-    </div>
-    <div class="jar-caption">
-      <strong>${fmt(poolTotalBalance())}</strong> están en la bolsa (repartidos en ${state.pool.banks.length} banco(s)) generando rentabilidad diaria.<br>
-      <strong>${fmt(activeCapital)}</strong> están prestados y en proceso de recuperación.
-    </div>
+  <div class="grid">
+    <div class="card"><div class="label">Rentabilidad anual préstamos</div><div class="num gold">${fmt(annualLoanYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(annualLoanYieldPct())}</strong> sobre el capital pendiente.</div></div>
+    <div class="card"><div class="label">Rentabilidad mensual préstamos</div><div class="num">${fmt(monthlyLoanYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(monthlyLoanYieldPct())}</strong> mensual sobre el capital pendiente.</div></div>
+    <div class="card"><div class="label">Rentabilidad anual bolsa</div><div class="num gold">${fmt(annualPoolYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(annualPoolYieldPct())}</strong> sobre el saldo de la bolsa.</div></div>
+    <div class="card"><div class="label">Rentabilidad mensual bolsa</div><div class="num">${fmt(monthlyPoolYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(monthlyPoolYieldPct())}</strong> mensual sobre el saldo de la bolsa.</div></div>
+    <div class="card"><div class="label">Rentabilidad anual total</div><div class="num gold">${fmt(annualTotalYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(annualTotalYieldPct())}</strong> sobre todo el capital.</div></div>
+    <div class="card"><div class="label">Rentabilidad mensual total</div><div class="num">${fmt(monthlyTotalYield())}</div><div class="section-sub" style="margin:2px 0 0;"><strong>${pctFmt(monthlyTotalYieldPct())}</strong> mensual sobre todo el capital.</div></div>
   </div>
   <div style="height:20px"></div>
   <h3 class="subsection-title">Cobros vencidos ${overdue.length? `<span class="badge vencida">${overdue.length}</span>`:''}</h3>
@@ -1019,6 +1127,7 @@ function viewPrestamos(){
       ${isAdmin() ? `
       <div class="loan-admin-actions">
         <button class="btn secondary small" data-edit-loan="${l.id}">${editing?'Cerrar edición':'Corregir información'}</button>
+        <button class="btn small" data-capital-loan="${l.id}">Abono a capital</button>
         <button class="btn rust small" data-delete-loan="${l.id}">Eliminar préstamo</button>
       </div>` : ''}
       <div class="loan-body ${open?'open':''}">
@@ -1255,10 +1364,187 @@ function viewReportes(){
   `;
 }
 
+let pendingPayment = null;
+
+function openPaymentDatePicker(loanId, n){
+  const loan = state.loans.find(l=>l.id===loanId);
+  const item = loan?.schedule.find(it=>it.n===n);
+  if(!loan || !item || item.paid) return;
+
+  pendingPayment = {loanId, n};
+  const modal = document.getElementById('paymentModal');
+  const input = document.getElementById('paymentDateInput');
+  const text = document.getElementById('paymentModalText');
+
+  text.textContent = `Cuota ${n} de ${loan.name}. Selecciona la fecha real en que se recibió el pago.`;
+  input.value = todayStr();
+  modal.classList.add('open');
+  setTimeout(()=>input.focus(), 0);
+}
+
+function closePaymentDatePicker(){
+  pendingPayment = null;
+  document.getElementById('paymentModal').classList.remove('open');
+}
+
+function confirmPaymentDate(){
+  if(!pendingPayment) return;
+  const paymentDate = document.getElementById('paymentDateInput').value;
+  if(!paymentDate){
+    showToast('Selecciona una fecha válida.');
+    return;
+  }
+  const {loanId, n} = pendingPayment;
+  closePaymentDatePicker();
+  registerPayment(loanId, n, paymentDate);
+}
+
+function bindPaymentModalEvents(){
+  document.getElementById('paymentCancelBtn').onclick = closePaymentDatePicker;
+  document.getElementById('paymentConfirmBtn').onclick = confirmPaymentDate;
+  document.getElementById('paymentModal').onclick = (e)=>{
+    if(e.target.id === 'paymentModal') closePaymentDatePicker();
+  };
+  document.getElementById('paymentDateInput').onkeydown = (e)=>{
+    if(e.key === 'Enter') confirmPaymentDate();
+    if(e.key === 'Escape') closePaymentDatePicker();
+  };
+}
+
+
+let pendingCapitalPayment = null;
+
+function openCapitalPaymentPicker(loanId){
+  const loan = state.loans.find(l=>l.id===loanId);
+  if(!loan) return;
+
+  const outstanding = loanOutstandingCapital(loan);
+  if(outstanding <= 0){
+    showToast('Este préstamo no tiene capital pendiente.');
+    return;
+  }
+
+  pendingCapitalPayment = {loanId};
+  const modal = document.getElementById('capitalModal');
+  const amountInput = document.getElementById('capitalAmountInput');
+  const dateInput = document.getElementById('capitalDateInput');
+  const text = document.getElementById('capitalModalText');
+
+  text.textContent = `Cliente: ${loan.name}. Capital pendiente: ${fmt(outstanding)}. El abono no marca una cuota como pagada; reduce el capital pendiente y recalcula las cuotas futuras.`;
+  amountInput.value = '';
+  amountInput.max = Math.ceil(outstanding);
+  dateInput.value = todayStr();
+  modal.classList.add('open');
+  setTimeout(()=>amountInput.focus(),0);
+}
+
+function closeCapitalPaymentPicker(){
+  pendingCapitalPayment = null;
+  document.getElementById('capitalModal').classList.remove('open');
+}
+
+function registerCapitalPayment(loanId, amount, paymentDate){
+  const loan = state.loans.find(l=>l.id===loanId);
+  if(!loan) return;
+
+  const outstanding = loanOutstandingCapital(loan);
+  if(!amount || amount<=0){ showToast('Escribe un monto válido para el abono.'); return; }
+  if(amount > outstanding + 0.01){
+    showToast(`El abono no puede superar el capital pendiente de ${fmt(outstanding)}.`);
+    return;
+  }
+  if(!paymentDate){ showToast('Selecciona la fecha del abono.'); return; }
+
+  let bank = bankById(loan.bankId);
+  if(!bank) bank = state.pool.banks[0];
+  if(bank) bank.balance += amount;
+
+  const unpaid = loan.schedule.filter(it=>!it.paid);
+  const newPrincipal = Math.max(0, outstanding-amount);
+  const i = loan.rate/100;
+  const remainingCount = unpaid.length;
+
+  if(newPrincipal <= 0.005){
+    unpaid.forEach(it=>{it.interest=0;it.capital=0;it.total=0;});
+  } else if(loan.type==='fijo'){
+    let balance = newPrincipal;
+    const cuota = i===0 ? newPrincipal/remainingCount :
+      newPrincipal*i/(1-Math.pow(1+i,-remainingCount));
+
+    unpaid.forEach((it,idx)=>{
+      const interest = balance*i;
+      let capital = cuota-interest;
+      if(idx===remainingCount-1) capital=balance;
+      balance=Math.max(0,balance-capital);
+      it.interest=interest;
+      it.capital=capital;
+      it.total=interest+capital;
+    });
+  } else if(loan.type==='interes'){
+    unpaid.forEach((it,idx)=>{
+      const interest=newPrincipal*i;
+      const capital=idx===remainingCount-1?newPrincipal:0;
+      it.interest=interest;
+      it.capital=capital;
+      it.total=interest+capital;
+    });
+  } else {
+    const interestPer=(newPrincipal*i*remainingCount)/remainingCount;
+    const capitalPer=newPrincipal/remainingCount;
+    unpaid.forEach((it,idx)=>{
+      const capital=idx===remainingCount-1
+        ? newPrincipal-capitalPer*(remainingCount-1)
+        : capitalPer;
+      it.interest=interestPer;
+      it.capital=capital;
+      it.total=interestPer+capital;
+    });
+  }
+
+  if(bank){
+    state.pool.movements.unshift({
+      date:paymentDate,
+      type:'abono_capital',
+      bankId:bank.id,
+      amount,
+      note:`Abono a capital de ${loan.name} — ${fmt(amount)} → ${bank.name}`
+    });
+  }
+
+  saveState();
+  render();
+  showToast(`Abono de ${fmt(amount)} registrado. Capital pendiente: ${fmt(newPrincipal)}.`);
+}
+
+function confirmCapitalPayment(){
+  if(!pendingCapitalPayment) return;
+  const amount=Number(document.getElementById('capitalAmountInput').value);
+  const date=document.getElementById('capitalDateInput').value;
+  const loanId=pendingCapitalPayment.loanId;
+  closeCapitalPaymentPicker();
+  registerCapitalPayment(loanId,amount,date);
+}
+
+function bindCapitalModalEvents(){
+  document.getElementById('capitalCancelBtn').onclick=closeCapitalPaymentPicker;
+  document.getElementById('capitalConfirmBtn').onclick=confirmCapitalPayment;
+  document.getElementById('capitalModal').onclick=(e)=>{
+    if(e.target.id==='capitalModal') closeCapitalPaymentPicker();
+  };
+  document.getElementById('capitalAmountInput').onkeydown=(e)=>{
+    if(e.key==='Enter') confirmCapitalPayment();
+    if(e.key==='Escape') closeCapitalPaymentPicker();
+  };
+  document.getElementById('capitalDateInput').onkeydown=(e)=>{
+    if(e.key==='Enter') confirmCapitalPayment();
+    if(e.key==='Escape') closeCapitalPaymentPicker();
+  };
+}
+
 function bindPanelEvents(){
   document.querySelectorAll('[data-pay-loan]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      registerPayment(Number(btn.dataset.payLoan), Number(btn.dataset.payN));
+      openPaymentDatePicker(Number(btn.dataset.payLoan), Number(btn.dataset.payN));
     });
   });
   document.querySelectorAll('[data-toggle-loan]').forEach(node=>{
@@ -1297,6 +1583,12 @@ function bindPanelEvents(){
           bankId: Number(document.getElementById(`edit-bankId-${id}`).value),
         });
       }catch(err){ showToast('Error al guardar: ' + err.message); }
+    });
+  });
+  document.querySelectorAll('[data-capital-loan]').forEach(btn=>{
+    btn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      openCapitalPaymentPicker(Number(btn.dataset.capitalLoan));
     });
   });
   document.querySelectorAll('[data-delete-loan]').forEach(btn=>{
